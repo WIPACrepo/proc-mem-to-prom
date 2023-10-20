@@ -1,0 +1,8 @@
+[Unit]
+Description=Systemd service unit file for proc-mem-to-prom.
+
+[Service]
+ExecStart=/bin/bash /usr/sbin/proc-mem-to-prom
+
+[Install]
+WantedBy=multi-user.target
