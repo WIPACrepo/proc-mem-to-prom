@@ -12,11 +12,11 @@ jobs:
     - name: Checkout Project
       uses: actions/checkout@v4
     - name: Install rust muslc
-      runs: |
+      run: |
         rustup toolchain install stable-x86_64-unknown-linux-musl
     - uses: Swatinem/rust-cache@v2
     - name: Build rust
-      runs: |
+      run: |
         cargo build -r --target=x86_64-unknown-linux-musl
     - name: upload binary
       uses: softprops/action-gh-release@v1
