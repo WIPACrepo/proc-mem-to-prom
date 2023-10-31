@@ -7,28 +7,30 @@ use hyper::{
 use lazy_static::lazy_static;
 use procfs::process::{all_processes, Status};
 use procfs::ProcError;
-use prometheus::{Encoder, GaugeVec, TextEncoder};
-use prometheus::{opts, register_gauge_vec};
+use prometheus::{Encoder, IntGaugeVec, TextEncoder};
+use prometheus::{opts, register_int_gauge_vec};
+use prometheus::core::Collector;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::env;
 use tokio::time::{sleep, Duration, Instant};
 use users::{Users, UsersCache};
 
 // declare all the prometheus metrics
 lazy_static! {
-    static ref USER_PROCESSES_GAUGE: GaugeVec = register_gauge_vec!(opts!(
+    static ref USER_PROCESSES_GAUGE: IntGaugeVec = register_int_gauge_vec!(opts!(
         "node_user_processes",
         "The number of processes per user."),
         &["job", "hostgroup", "instance", "username"]
     )
     .unwrap();
-    static ref USER_MEMORY_GAUGE: GaugeVec = register_gauge_vec!(opts!(
+    static ref USER_MEMORY_GAUGE: IntGaugeVec = register_int_gauge_vec!(opts!(
         "node_user_processes_rss",
         "The RSS on a node per user."),
         &["job", "hostgroup", "instance", "username"]
     )
     .unwrap();
-    static ref USER_SWAP_GAUGE: GaugeVec = register_gauge_vec!(opts!(
+    static ref USER_SWAP_GAUGE: IntGaugeVec = register_int_gauge_vec!(opts!(
         "node_user_processes_swap",
         "The swap on a node per user."),
         &["job", "hostgroup", "instance", "username"]
@@ -65,9 +67,9 @@ fn get_all_procs() -> Result<Vec<Status>, ProcError> {
 }
 
 struct ProcEntry {
-    count: u64,
-    rss: u64,
-    swap: u64
+    count: i64,
+    rss: i64,
+    swap: i64
 }
 
 fn procs(usernames: &UsersCache, hostgroup: &str, instance: &str) {
@@ -89,26 +91,58 @@ fn procs(usernames: &UsersCache, hostgroup: &str, instance: &str) {
         let entry = user_procs.entry(username.to_string()).or_insert(ProcEntry{count: 0, rss: 0, swap: 0});
         entry.count += 1;
         entry.rss += match process.vmrss {
-            Some(x) => x,
+            Some(x) => x as i64,
             None => 0
         } * 1000;
         entry.swap += match process.vmswap {
-            Some(x) => x,
+            Some(x) => x as i64,
             None => 0
         } * 1000;
+    }
+
+    let prev_metrics = USER_PROCESSES_GAUGE.collect();
+    let mut prev_usernames = HashSet::with_capacity(prev_metrics.len());
+    for m in &prev_metrics {
+        for mm in m.get_metric() {
+            match mm.get_label().last() {
+                Some(x) => {
+                    prev_usernames.insert(x.get_value());
+                },
+                None => { }
+            }
+        }
     }
 
     for (user, entry) in user_procs.into_iter() {
         let username = user.as_str();
         USER_PROCESSES_GAUGE.with_label_values(
             &["proc-mem-to-prom", hostgroup, instance, username]
-        ).set(entry.count as f64);
+        ).set(entry.count);
         USER_MEMORY_GAUGE.with_label_values(
             &["proc-mem-to-prom", hostgroup, instance, username]
-        ).set(entry.rss as f64);
+        ).set(entry.rss);
         USER_SWAP_GAUGE.with_label_values(
             &["proc-mem-to-prom", hostgroup, instance, username]
-        ).set(entry.swap as f64);
+        ).set(entry.swap);
+        prev_usernames.remove(username);
+    }
+
+    for username in &prev_usernames {
+        match USER_PROCESSES_GAUGE.remove_label_values(
+            &["proc-mem-to-prom", hostgroup, instance, username]
+        ) {
+            _ => { }
+        }
+        match USER_MEMORY_GAUGE.remove_label_values(
+            &["proc-mem-to-prom", hostgroup, instance, username]
+        ) {
+            _ => { }
+        }
+        match USER_SWAP_GAUGE.remove_label_values(
+            &["proc-mem-to-prom", hostgroup, instance, username]
+        ) {
+            _ => { }
+        }
     }
 }
 
